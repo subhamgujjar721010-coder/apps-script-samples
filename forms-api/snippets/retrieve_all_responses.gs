@@ -1,40 +1,87 @@
-/**
- * Copyright 2022 Google LLC
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+const SHEET_NAME = 'Bookings';
 
-// [START forms_retrieve_all_responses]
-function callFormsAPI() {
-  console.log("Calling the Forms API!");
-  const formId = "<YOUR_FORM_ID>";
-
-  // Get OAuth Token
-  const OAuthToken = ScriptApp.getOAuthToken();
-  console.log(`OAuth token is: ${OAuthToken}`);
-
-  const formsAPIUrl = `https://forms.googleapis.com/v1/forms/${formId}/responses`;
-  console.log(`formsAPIUrl is: ${formsAPIUrl}`);
-
-  const options = {
-    headers: {
-      Authorization: `Bearer ${OAuthToken}`,
-      Accept: "application/json",
-    },
-    method: "get",
-  };
-
-  const response = UrlFetchApp.fetch(formsAPIUrl, options);
-  console.log(`Response from forms.responses was: ${response}`);
+function getSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(SHEET_NAME);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NAME);
+    sheet.appendRow([
+      'id',
+      'patientName',
+      'ageSex',
+      'mobile',
+      'centreCode',
+      'tests',
+      'status',
+      'createdAt'
+    ]);
+  }
+  return sheet;
 }
-// [END forms_retrieve_all_responses]
+
+function jsonResponse(payload) {
+  return ContentService
+    .createTextOutput(JSON.stringify(payload))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function doGet(e) {
+  try {
+    const sheet = getSheet();
+    const rows = sheet.getDataRange().getValues();
+    if (rows.length <= 1) {
+      return jsonResponse({ ok: true, bookings: [] });
+    }
+
+    const headers = rows[0];
+    const requestedCentre = (e && e.parameter && e.parameter.centreCode)
+      ? String(e.parameter.centreCode).trim()
+      : '';
+
+    const bookings = [];
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row[0] && !row[1]) continue;
+
+      const item = {};
+      for (let j = 0; j < headers.length; j++) {
+        item[headers[j]] = row[j];
+      }
+
+      if (!requestedCentre || String(item.centreCode || '').trim() === requestedCentre) {
+        bookings.push(item);
+      }
+    }
+
+    return jsonResponse({ ok: true, bookings: bookings });
+  } catch (err) {
+    return jsonResponse({ ok: false, error: err.message });
+  }
+}
+
+function doPost(e) {
+  try {
+    const sheet = getSheet();
+    const raw = (e && e.postData && e.postData.contents) ? e.postData.contents : '{}';
+    const data = JSON.parse(raw);
+
+    const id = data.id || ('BK-' + Date.now());
+    const patientName = data.patientName || '';
+    const ageSex = data.ageSex || '';
+    const mobile = data.mobile || '';
+    const centreCode = data.centreCode || '';
+    const tests = Array.isArray(data.tests) ? data.tests.join(', ') : (data.tests || '');
+    const status = data.status || 'Booked';
+    const createdAt = data.createdAt || new Date().toISOString();
+
+    sheet.appendRow([id, patientName, ageSex, mobile, centreCode, tests, status, createdAt]);
+
+    return jsonResponse({
+      ok: true,
+      id: id,
+      booking: { id, patientName, ageSex, mobile, centreCode, tests, status, createdAt }
+    });
+  } catch (err) {
+    return jsonResponse({ ok: false, error: err.message });
+  }
+}
